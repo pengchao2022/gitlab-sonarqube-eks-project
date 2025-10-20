@@ -37,10 +37,10 @@ spec:
           mountPath: /opt/sonarqube/extensions
         resources:
           requests:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "500m"
           limits:
-            memory: "512Mi"
+            memory: "1Gi"
             cpu: "1000m"
         livenessProbe:
           httpGet:
