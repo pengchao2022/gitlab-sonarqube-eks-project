@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: gitlab
+  labels:
+    app: gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitlab
+  template:
+    metadata:
+      labels:
+        app: gitlab
+    spec:
+      containers:
+      - name: gitlab
+        image: gitlab/gitlab-ce:latest
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 443
+          name: https
+        - containerPort: 22
+          name: ssh
+        env:
+        - name: GITLAB_OMNIBUS_CONFIG
+          value: |
+            external_url 'http://gitlab.example.com'
+            gitlab_rails['gitlab_shell_ssh_port'] = 2222
+            gitlab_rails['time_zone'] = 'UTC'
+        volumeMounts:
+        - name: gitlab-data
+          mountPath: /etc/gitlab
+        - name: gitlab-data
+          mountPath: /var/opt/gitlab
+        - name: gitlab-data
+          mountPath: /var/log/gitlab
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "500m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /explore
+            port: 80
+          initialDelaySeconds: 300
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /explore
+            port: 80
+          initialDelaySeconds: 300
+          periodSeconds: 30
+      volumes:
+      - name: gitlab-data
+        persistentVolumeClaim:
+          claimName: gitlab-pvc

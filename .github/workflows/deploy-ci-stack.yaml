@@ -1,0 +1,135 @@
+name: Deploy GitLab and SonarQube to EKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      gitlab_version:
+        description: 'GitLab 版本'
+        required: false  
+        default: 'latest'
+      sonarqube_version:
+        description: 'SonarQube 版本'
+        required: false
+        default: 'lts-community'
+
+env:
+  CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME || 'comic-website-prod' }}
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  deploy-ci-stack:
+    name: Deploy CI Stack
+    runs-on: ubuntu-latest
+    
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ env.AWS_REGION }} \
+          --name ${{ env.CLUSTER_NAME }}
+
+    - name: Verify cluster access
+      run: |
+        kubectl cluster-info
+        kubectl get nodes
+
+    - name: Create Namespaces
+      run: |
+        kubectl apply -f k8s/namespaces.yaml
+
+    - name: Deploy GitLab
+      run: |
+        echo "Deploying GitLab..."
+        kubectl apply -f k8s/gitlab/pvc.yaml -n gitlab
+        kubectl apply -f k8s/gitlab/deployment.yaml -n gitlab
+        kubectl apply -f k8s/gitlab/service.yaml -n gitlab
+        kubectl apply -f k8s/gitlab/ingress.yaml -n gitlab
+
+    - name: Deploy SonarQube
+      run: |
+        echo "Deploying SonarQube..."
+        kubectl apply -f k8s/sonarqube/pvc.yaml -n sonarqube
+        kubectl apply -f k8s/sonarqube/deployment.yaml -n sonarqube
+        kubectl apply -f k8s/sonarqube/service.yaml -n sonarqube
+        kubectl apply -f k8s/sonarqube/ingress.yaml -n sonarqube
+
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for GitLab to be ready (this may take 5-10 minutes)..."
+        timeout 1200 bash -c 'until kubectl get pod -n gitlab -l app=gitlab -o jsonpath="{.items[0].status.phase}" 2>/dev/null | grep -q Running; do sleep 30; echo "Still waiting for GitLab..."; done'
+        
+        echo "Waiting for SonarQube to be ready..."
+        timeout 600 bash -c 'until kubectl get pod -n sonarqube -l app=sonarqube -o jsonpath="{.items[0].status.phase}" 2>/dev/null | grep -q Running; do sleep 20; echo "Still waiting for SonarQube..."; done'
+
+    - name: Check pod status
+      run: |
+        echo "=== Pod Status ==="
+        kubectl get pods -n gitlab -o wide
+        kubectl get pods -n sonarqube -o wide
+        
+        echo "=== Pod Logs (GitLab) ==="
+        kubectl logs -n gitlab -l app=gitlab --tail=50 || echo "No logs yet"
+        
+        echo "=== Pod Logs (SonarQube) ==="
+        kubectl logs -n sonarqube -l app=sonarqube --tail=50 || echo "No logs yet"
+
+    - name: Get ALB URLs
+      run: |
+        echo "=== Deployment Status ==="
+        
+        # 检查 Ingress 状态
+        echo "Checking Ingress resources..."
+        kubectl get ingress -A
+        
+        # 获取 ALB URLs
+        GITLAB_ALB=$(kubectl get ingress gitlab-ingress -n gitlab -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Not ready yet")
+        SONAR_ALB=$(kubectl get ingress sonarqube-ingress -n sonarqube -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Not ready yet")
+        
+        echo "GitLab URL: http://$GITLAB_ALB"
+        echo "SonarQube URL: http://$SONAR_ALB"
+        
+        # 设置输出以便在后续步骤中使用
+        echo "GITLAB_URL=http://$GITLAB_ALB" >> $GITHUB_ENV
+        echo "SONARQUBE_URL=http://$SONAR_ALB" >> $GITHUB_ENV
+        
+        # 添加通知
+        echo "::notice title=GitLab Access::Access GitLab at: http://$GITLAB_ALB"
+        echo "::notice title=SonarQube Access::Access SonarQube at: http://$SONAR_ALB"
+
+    - name: Health Check Services
+      run: |
+        echo "=== Health Checks ==="
+        
+        # 检查服务状态
+        echo "Services:"
+        kubectl get svc -n gitlab
+        kubectl get svc -n sonarqube
+        
+        # 检查 PVC 状态
+        echo "Persistent Volume Claims:"
+        kubectl get pvc -n gitlab
+        kubectl get pvc -n sonarqube
+        
+        # 检查 PV 状态
+        echo "Persistent Volumes:"
+        kubectl get pv
+
+    - name: Final Status Check
+      run: |
+        echo "=== Final Deployment Status ==="
+        echo "GitLab Status:"
+        kubectl get deployment,svc,ingress,pvc -n gitlab
+        
+        echo "SonarQube Status:"
+        kubectl get deployment,svc,ingress,pvc -n sonarqube
