@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: postgresql
+data:
+  init-database.sh: |
+    #!/bin/bash
+    set -e
+    
+    # 等待 PostgreSQL 启动
+    until pg_isready -h localhost -U postgres; do
+      echo "Waiting for PostgreSQL to start..."
+      sleep 2
+    done
+    
+    echo "PostgreSQL is ready, initializing databases..."
+    
+    # 创建 GitLab 数据库和用户
+    psql -v ON_ERROR_STOP=1 --username "postgres" <<-EOSQL
+        CREATE USER gitlab WITH PASSWORD 'gitlab12345';
+        CREATE USER gitlab_replicator WITH REPLICATION PASSWORD 'replicator123';
+        CREATE USER registry WITH PASSWORD 'registry123';
+        
+        CREATE DATABASE gitlabhq_production OWNER gitlab;
+        CREATE DATABASE registry OWNER registry;
+        
+        GRANT ALL PRIVILEGES ON DATABASE gitlabhq_production TO gitlab;
+        GRANT ALL PRIVILEGES ON DATABASE registry TO registry;
+    EOSQL
+    
+    # 为 GitLab 数据库启用扩展
+    psql -v ON_ERROR_STOP=1 --username "postgres" -d gitlabhq_production <<-EOSQL
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE EXTENSION IF NOT EXISTS btree_gist;
+        CREATE EXTENSION IF NOT EXISTS amcheck;
+    EOSQL
+    
+    echo "GitLab databases and users initialized successfully"
+  
+  postgresql.conf: |
+    # PostgreSQL Configuration
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 200
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    maintenance_work_mem = 64MB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 4MB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+    
+    # Replication
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    hot_standby = on

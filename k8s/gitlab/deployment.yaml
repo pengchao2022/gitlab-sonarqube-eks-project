@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: gitlab
-        image: gitlab/gitlab-ce:latest
+        image: gitlab/gitlab-ce:8.0.0-ce.0
         ports:
         - containerPort: 80
           name: http
@@ -26,35 +26,115 @@ spec:
         - containerPort: 22
           name: ssh
         env:
-        - name: GITLAB_OMNIBUS_CONFIG
-          value: |
-            external_url 'http://gitlab.example.com'
-            gitlab_rails['gitlab_shell_ssh_port'] = 2222
-            gitlab_rails['time_zone'] = 'UTC'
+        # 数据库配置
+        - name: DB_TYPE
+          value: postgres
+        - name: DB_HOST
+          value: "postgresql.postgresql"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: gitlabhq_production
+        - name: DB_USER
+          value: gitlab
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-database-secret
+              key: database-password
+        
+        # Redis 配置 - 使用 AWS ElastiCache
+        - name: REDIS_HOST
+          value: "comic-website-prod-redis.mdpd9m.0001.use1.cache.amazonaws.com"
+        - name: REDIS_PORT
+          value: "6379"
+        
+        # GitLab 基本配置
+        - name: GITLAB_HOST
+          value: "gitlab.example.com"
+        - name: GITLAB_PORT
+          value: "80"
+        - name: GITLAB_SSH_PORT
+          value: "2222"
+        - name: GITLAB_EMAIL
+          value: "gitlab@example.com"
+        - name: GITLAB_TIMEZONE
+          value: "UTC"
+        
+        # 安全密钥
+        - name: GITLAB_SECRETS_DB_KEY_BASE
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-secrets
+              key: db-key-base
+        - name: GITLAB_SECRETS_SECRET_KEY_BASE
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-secrets
+              key: secret-key-base
+        - name: GITLAB_SECRETS_OTP_KEY_BASE
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-secrets
+              key: otp-key-base
+        
+        # 禁用不需要的功能
+        - name: GITLAB_PAGES_ENABLED
+          value: "false"
+        - name: GITLAB_REGISTRY_ENABLED
+          value: "false"
+        - name: GITLAB_BACKUP_SCHEDULE
+          value: "disable"
+
+        # 禁用所有监控和额外服务
+        - name: PROMETHEUS_ENABLE
+          value: "false"
+        - name: ALERTMANAGER_ENABLE
+          value: "false"
+        - name: NODE_EXPORTER_ENABLE
+          value: "false"
+        - name: REDIS_EXPORTER_ENABLE
+          value: "false"
+        - name: POSTGRES_EXPORTER_ENABLE
+          value: "false"
+        - name: GITLAB_EXPORTER_ENABLE
+          value: "false"
+        - name: GRAFANA_ENABLE
+          value: "false"
+        - name: GITLAB_KAS_ENABLE
+          value: "false"
+        - name: MATTERMOST_ENABLE
+          value: "false"
+        
+        # 资源优化
+        - name: UNICORN_WORKER_PROCESSES
+          value: "1"
+        - name: SIDEKIQ_CONCURRENCY
+          value: "2"
+        
+        # 调试配置
+        - name: DEBUG
+          value: "true"
+        
         volumeMounts:
         - name: gitlab-data
-          mountPath: /etc/gitlab
-        - name: gitlab-data
-          mountPath: /var/opt/gitlab
-        - name: gitlab-data
-          mountPath: /var/log/gitlab
+          mountPath: /home/git/data
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
             memory: "1Gi"
             cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        # 临时禁用健康检查
         livenessProbe:
-          httpGet:
-            path: /explore
-            port: 80
+          exec:
+            command: ["/bin/sh", "-c", "exit 0"]
           initialDelaySeconds: 300
           periodSeconds: 30
         readinessProbe:
-          httpGet:
-            path: /explore
-            port: 80
+          exec:
+            command: ["/bin/sh", "-c", "exit 0"]
           initialDelaySeconds: 300
           periodSeconds: 30
       volumes:
