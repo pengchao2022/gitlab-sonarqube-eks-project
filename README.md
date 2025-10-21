@@ -62,3 +62,5 @@ In this demo, I will show you a complete gitlab CI jenkins CD and Sonarqube for 
 - Sonarqube code report
 
 ![SonarQube_report](./sonarqube_quality_report.png)
+
+- Designed and Developed by Ma Pengchao @2025
